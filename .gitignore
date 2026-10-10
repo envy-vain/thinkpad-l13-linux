@@ -1,0 +1,14 @@
+# Secure Boot key material - never commit these
+*.key
+*.crt
+*.cer
+*.der
+
+# Generated / backup EFI artifacts
+*.efi
+*.bak-*
+
+# Editor / OS cruft
+*~
+*.swp
+.DS_Store

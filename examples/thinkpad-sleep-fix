@@ -1,0 +1,37 @@
+#!/bin/bash
+# Standalone copy of the resume hook, for people who want ONLY this fix and not
+# the rest of hibernate-setup.sh.
+#
+# Install:
+#   sudo install -Dm755 examples/thinkpad-sleep-fix /usr/lib/systemd/system-sleep/thinkpad-sleep-fix
+#   sudo sed -i "s/@ROOTUUID@/$(findmnt -no UUID /)/" /usr/lib/systemd/system-sleep/thinkpad-sleep-fix
+#
+# systemd runs this as:  $1 = pre|post   $2 = suspend|hibernate|hybrid-sleep|suspend-then-hibernate
+#
+# pre  + hibernate : point GRUB's next boot at the kernel that is running right now.
+#                    Resuming with a different kernel than the one that hibernated fails,
+#                    and the menu default is not necessarily the running kernel.
+#                    (Only needed if you keep more than one kernel installed.)
+# post             : re-initialise the Elan touchpad/TrackPoint, whose buttons come back
+#                    dead after resume on some ThinkPads, and restore the keyboard
+#                    backlight level, which the firmware clears on wake.
+KBD=/sys/class/leds/tpacpi::kbd_backlight/brightness
+SAVE=/run/kbd-backlight.saved
+ROOTUUID=@ROOTUUID@
+
+case "$1" in
+  pre)
+    [ -w "$KBD" ] && cat "$KBD" > "$SAVE" 2>/dev/null
+    if [[ "$2" == *hibernate* ]]; then
+        img=$(sed -n 's|.*BOOT_IMAGE=[^ ]*/boot/vmlinuz-\([^ ]*\).*|\1|p' /proc/cmdline)
+        [ -n "$img" ] && grub-reboot \
+            "gnulinux-advanced-$ROOTUUID>gnulinux-$img-advanced-$ROOTUUID" 2>/dev/null
+    fi
+    ;;
+  post)
+    modprobe -r psmouse 2>/dev/null && modprobe psmouse
+    sleep 1
+    [ -s "$SAVE" ] && cat "$SAVE" > "$KBD" 2>/dev/null
+    ;;
+esac
+exit 0
