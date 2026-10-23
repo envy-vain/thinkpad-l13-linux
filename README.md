@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Two small, re-runnable scripts for getting a ThinkPad working properly on an Arch-based
+Three small, re-runnable scripts for getting a ThinkPad working properly on an Arch-based
 distro with a **btrfs root** and **GRUB**:
 
 - **`scripts/hibernate-setup.sh`** — hibernation onto a btrfs swapfile, including the parts
@@ -15,8 +15,9 @@ distro with a **btrfs root** and **GRUB**:
 Most of this applies to any Arch-based laptop. The two genuinely ThinkPad-specific bits are the
 battery charge thresholds and the post-resume fix for the TrackPoint and keyboard backlight.
 
-> Read a script before running it with `sudo`. Both back up every file they change
-> (into `/root/hibernate-setup-backups`) and are safe to re-run.
+> Read a script before running it with `sudo`. All are safe to re-run. `hibernate-setup.sh` backs up
+> the files it edits (`/etc/fstab`, `/etc/default/grub`) into `/root/hibernate-setup-backups`; the
+> others only add files of their own, which [Undo](#undo) removes.
 
 ## Contents
 
@@ -132,7 +133,7 @@ When it's on:
   lose nothing there. A stricter version (2.5 W, no turbo, EPP=power) was 2.2× slower single-threaded for no
   idle gain, so this one uses the RAPL cap alone.
 - **iGPU capped at 700 MHz.** 300 MHz made scrolling and video choppy.
-- **Fan off**, with a safety net: `ulp-fan-guard` hands the fan back to the EC at 65 °C, and the
+- **Fan off**, with a safety net: `ulp-fan-guard` hands the fan back to the EC at 65 °C (until it cools to 55 °C), and the
   thinkpad_acpi watchdog does too if the guard ever stops. Needs `options thinkpad_acpi fan_control=1`.
 - Keyboard backlight off, PCIe ASPM `powersupersave`, Bluetooth off (unless something is connected).
 - **KDE Plasma:** animations and blur off, and sensor-polling widgets, kded modules and background
@@ -141,6 +142,15 @@ When it's on:
 
 Switching the power profile to Balanced or Performance turns the mode off. A sleep hook re-applies the cap
 after resume, since the firmware resets RAPL on wake.
+
+Good to know:
+
+- Switching on and off asks for your password (pkexec), since the limits are root-only. If you'd rather not be
+  asked, add a polkit rule for `/usr/local/bin/ulp-root`. Without one, the automatic switch-off from the power
+  profile still needs a polkit agent to answer.
+- In Plasma, switching off restores the panel layout saved when the mode came on, so panel or widget changes
+  made in between are undone.
+- It needs `powerprofilesctl` (power-profiles-daemon, or tuned-ppd on Fedora).
 
 ## Undo
 
@@ -151,6 +161,9 @@ sudo rm -f /usr/lib/systemd/system-sleep/thinkpad-sleep-fix
 # then remove the /swap lines from /etc/fstab and the resume= parameters from
 # /etc/default/grub (originals are in /root/hibernate-setup-backups), and:
 sudo grub-mkconfig -o /boot/grub/grub.cfg
+# free the disk space: delete the swapfile, then the @swap subvolume (from the btrfs top level, subvolid=5)
+sudo rm /swap/swapfile && sudo umount /swap
+# if you added them: the GRUB snippet in /etc/grub.d/40_custom and /etc/systemd/sleep.conf.d/hibernate-delay.conf
 
 # power tuning
 sudo systemctl disable --now pci-runtime-pm.service
@@ -164,7 +177,7 @@ sudo rm -f /etc/systemd/system/pci-runtime-pm.service /usr/local/bin/pci-runtime
 ```
 
 Battery thresholds live in the EC; reset them by writing `100` to
-`/sys/class/power_supply/BAT0/charge_control_end_threshold`, or from KDE's
+`/sys/class/power_supply/BAT0/charge_control_end_threshold` and then `0` to `charge_control_start_threshold`, or from KDE's
 *Power Management → Charge Limit*.
 
 ## Tested on

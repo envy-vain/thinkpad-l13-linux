@@ -11,11 +11,12 @@ autostart=${XDG_CONFIG_HOME:-$HOME/.config}/autostart
 [ "$(id -u)" != 0 ] || { echo "error: run as your normal user (it uses sudo for the system part)" >&2; exit 1; }
 
 if [ "${1:-}" = --uninstall ]; then
-    [ -e /run/ultra-low-power ] && /usr/local/bin/ultra-low-power off
+    if [ -e /run/ultra-low-power ]; then /usr/local/bin/ultra-low-power off || true; fi
     systemctl --user disable --now ulp-profile-watch.service 2>/dev/null || true
     rm -f "$units/ulp-profile-watch.service" "$apps/ultra-low-power.desktop" "$autostart/ulp-profile-watch.desktop"
     sudo rm -f /usr/local/bin/ultra-low-power /usr/local/bin/ulp-root /usr/local/bin/ulp-fan-guard \
                /usr/lib/systemd/system-sleep/ulp-resume
+    systemctl --user daemon-reload
     echo "Removed."
     exit 0
 fi

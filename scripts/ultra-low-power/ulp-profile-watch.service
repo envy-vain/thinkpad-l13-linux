@@ -6,8 +6,8 @@ After=plasma-plasmashell.service
 [Service]
 ExecStartPre=/usr/local/bin/ultra-low-power heal
 ExecStart=/usr/local/bin/ultra-low-power watch
-Restart=on-failure
-RestartSec=5
+Restart=always
+RestartSec=10
 
 [Install]
 WantedBy=graphical-session.target

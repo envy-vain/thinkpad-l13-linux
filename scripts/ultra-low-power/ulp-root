@@ -65,8 +65,12 @@ apply() {
   systemctl stop nbfc_service.service 2>/dev/null
   systemctl stop ulp-fan-guard.service 2>/dev/null
   systemd-run --quiet --collect --unit=ulp-fan-guard /usr/local/bin/ulp-fan-guard
-  # Bluetooth off, unless something (e.g. earbuds) is connected
-  [ -z "$(bluetoothctl devices Connected 2>/dev/null)" ] && rfkill block bluetooth
+  # Bluetooth off, unless something (e.g. earbuds) is connected. Only when switching on: right after a
+  # resume (reapply) headphones haven't reconnected yet, and blocking then would cut them off for good.
+  # timeout: bluetoothctl waits forever when bluetoothd isn't running.
+  if [ "${1:-}" = on ] && [ -z "$(timeout 3 bluetoothctl devices Connected 2>/dev/null)" ]; then
+    rfkill block bluetooth
+  fi
   return 0
 }
 
@@ -75,7 +79,7 @@ case "${1:-}" in
     [ -e $FLAG ] || save
     touch $FLAG
     powerprofilesctl set power-saver
-    apply
+    apply on
     ;;
   reapply)
     [ -e $FLAG ] && apply
