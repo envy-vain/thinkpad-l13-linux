@@ -140,8 +140,7 @@ When it's on:
 - `throttled` and `nbfc` are paused while the mode is on, because both would undo the cap or the fan setting.
 
 Switching the power profile to Balanced or Performance turns the mode off. A sleep hook re-applies the cap
-after resume, since the firmware resets RAPL on wake. On my L13 Gen 2, the CPU package went from 3.7 W to
-2.7 W while playing a video.
+after resume, since the firmware resets RAPL on wake.
 
 ## Undo
 
@@ -181,3 +180,9 @@ Battery thresholds live in the EC; reset them by writing `100` to
 - [Arch Wiki: Power management](https://wiki.archlinux.org/title/Power_management)
 - [Arch Wiki: btrfs swapfile](https://wiki.archlinux.org/title/Btrfs#Swap_file)
 - [Arch Wiki: suspend and hibernate](https://wiki.archlinux.org/title/Power_management/Suspend_and_hibernate)
+
+## Credits
+
+Made by [envy-vain](https://github.com/envy-vain). **LLM disclaimer:** parts of these scripts were written with
+help from an LLM (Claude, by Anthropic). Everything was tested on the laptop above. Read a script before you
+run it with sudo.
