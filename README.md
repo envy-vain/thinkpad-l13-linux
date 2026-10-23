@@ -196,6 +196,6 @@ Battery thresholds live in the EC; reset them by writing `100` to
 
 ## Credits
 
-Made by [envy-vain](https://github.com/envy-vain). **LLM disclaimer:** parts of these scripts were written with
-help from an LLM (Claude, by Anthropic). Everything was tested on the laptop above. Read a script before you
+Made by [envy-vain](https://github.com/envy-vain). **LLM disclaimer:** an LLM (Claude, by Anthropic)
+helped polish these scripts and docs. Everything was tested on the laptop above. Read a script before you
 run it with sudo.
