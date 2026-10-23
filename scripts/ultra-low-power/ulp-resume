@@ -1,0 +1,5 @@
+#!/bin/sh
+# systemd sleep hook: the firmware resets the RAPL power limits on wake, so put the ultra-low-power cap back.
+# Installed to /usr/lib/systemd/system-sleep/ulp-resume.   $1 = pre|post
+[ "$1" = post ] && [ -e /run/ultra-low-power ] && /usr/local/bin/ulp-root reapply
+exit 0

@@ -1,0 +1,111 @@
+#!/bin/bash
+# Root half of ultra-low-power: CPU/GPU/platform limits.
+# Called through pkexec by /usr/local/bin/ultra-low-power, and by the sleep hook after resume.
+#   on      save current settings, then apply limits
+#   reapply apply limits again (after resume the firmware resets RAPL)
+#   off     restore saved settings
+set -u
+PATH=/usr/local/sbin:/usr/local/bin:/usr/bin
+FLAG=/run/ultra-low-power          # also checked by the AC udev rule and the sleep hook
+SAVE=/run/ultra-low-power.saved
+CAP_PL1=3000000                    # 3 W sustained: idle/video draw is the same, steady load stays cool
+CAP_PL2=12000000                   # 12 W for ~1 s bursts: clicks, app starts and page loads stay snappy
+RAPL="/sys/class/powercap/intel-rapl:0 /sys/class/powercap/intel-rapl-mmio:0"
+PST=/sys/devices/system/cpu/intel_pstate
+KBD=/sys/class/leds/tpacpi::kbd_backlight/brightness
+ASPM=/sys/module/pcie_aspm/parameters/policy
+# Intel iGPU (the card number differs between machines) and the Wi-Fi interface
+GPU=; for c in /sys/class/drm/card[0-9]; do [ -e "$c/gt_max_freq_mhz" ] && { GPU=$c; break; }; done
+WIFI=$(iw dev 2>/dev/null | awk '$1 == "Interface" { print $2; exit }')
+
+save() {
+  {
+    for z in $RAPL; do
+      [ -d "$z" ] || continue
+      for c in 0 1; do echo "$z/constraint_${c}_power_limit_uw $(cat $z/constraint_${c}_power_limit_uw)"; done
+    done
+    echo "$PST/no_turbo $(cat $PST/no_turbo)"
+    echo "$PST/max_perf_pct $(cat $PST/max_perf_pct)"
+    if [ -n "$GPU" ]; then  # max before boost: restoring in this order keeps boost <= max valid
+      echo "$GPU/gt_max_freq_mhz $(cat $GPU/gt_max_freq_mhz)"
+      echo "$GPU/gt_boost_freq_mhz $(cat $GPU/gt_boost_freq_mhz)"
+    fi
+    [ -e "$KBD" ] && echo "$KBD $(cat $KBD)"
+    echo "$ASPM $(sed -n 's/.*\[\(.*\)\].*/\1/p' $ASPM)"
+    [ -n "$WIFI" ] && iw dev "$WIFI" get power_save 2>/dev/null | awk '{print "wifi_ps", $3}'
+    rfkill -n -o SOFT list bluetooth 2>/dev/null | head -1 | awk '{print "bt", $1}'
+  } > $SAVE
+}
+
+apply() {
+  # throttled rewrites PL1/PL2 every 30 s on battery and would undo the cap
+  systemctl stop throttled.service 2>/dev/null
+  for z in $RAPL; do
+    [ -d "$z" ] || continue
+    echo $CAP_PL1 > $z/constraint_0_power_limit_uw  # long term (PL1)
+    echo $CAP_PL2 > $z/constraint_1_power_limit_uw  # short term (PL2)
+  done
+  # An older 2.5 W / no-turbo / 30% / EPP=power setup made the laptop painfully slow
+  # (single-thread 2.2x slower) for no idle-power gain. The RAPL cap alone bounds the average.
+  echo 0 > $PST/no_turbo
+  echo 100 > $PST/max_perf_pct
+  for p in /sys/devices/system/cpu/cpufreq/policy*; do
+    echo powersave > $p/scaling_governor
+    echo balance_power > $p/energy_performance_preference 2>/dev/null
+  done
+  if [ -n "$GPU" ]; then
+    echo 700 > $GPU/gt_boost_freq_mhz               # 300 MHz made scrolling/video choppy
+    echo 700 > $GPU/gt_max_freq_mhz
+  fi
+  echo 0 > $KBD 2>/dev/null
+  echo powersupersave > $ASPM 2>/dev/null
+  # Wi-Fi power save stays OFF: it saves little and hurts weak links (far from the router) the most
+  [ -n "$WIFI" ] && iw dev "$WIFI" set power_save off 2>/dev/null
+  # Fan off (nbfc would keep it at >= 20%); ulp-fan-guard brings it back above 65 C
+  systemctl stop nbfc_service.service 2>/dev/null
+  systemctl stop ulp-fan-guard.service 2>/dev/null
+  systemd-run --quiet --collect --unit=ulp-fan-guard /usr/local/bin/ulp-fan-guard
+  # Bluetooth off, unless something (e.g. earbuds) is connected
+  [ -z "$(bluetoothctl devices Connected 2>/dev/null)" ] && rfkill block bluetooth
+  return 0
+}
+
+case "${1:-}" in
+  on)
+    [ -e $FLAG ] || save
+    touch $FLAG
+    powerprofilesctl set power-saver
+    apply
+    ;;
+  reapply)
+    [ -e $FLAG ] && apply
+    ;;
+  off)
+    [ -e $FLAG ] || exit 0
+    rm -f $FLAG
+    systemctl stop ulp-fan-guard.service 2>/dev/null
+    echo "watchdog 0" > /proc/acpi/ibm/fan 2>/dev/null
+    echo "level auto" > /proc/acpi/ibm/fan 2>/dev/null
+    # nbfc keeps a manual speed in /var/lib/nbfc/state.json across restarts: always go back to the curve
+    if systemctl is-enabled -q nbfc_service.service; then systemctl start nbfc_service.service; sleep 2; nbfc set -a 2>/dev/null; fi
+    while read -r path val; do
+      case "$path" in
+        wifi_ps) [ -n "$WIFI" ] && iw dev "$WIFI" set power_save "$val" 2>/dev/null ;;
+        bt)      [ "$val" = unblocked ] && rfkill unblock bluetooth ;;
+        *)       echo "$val" > "$path" 2>/dev/null ;;
+      esac
+    done < $SAVE
+    rm -f $SAVE
+    systemctl is-enabled -q throttled.service && systemctl start throttled.service
+    # Back to whatever profile the AC rule would pick, unless one was just chosen by hand
+    if [ "$(powerprofilesctl get)" = power-saver ]; then
+      if grep -qx 1 /sys/class/power_supply/A*/online 2>/dev/null; then
+        powerprofilesctl set performance
+      else
+        powerprofilesctl set balanced
+      fi
+    fi
+    ;;
+  *) echo "usage: ulp-root on|reapply|off" >&2; exit 2 ;;
+esac
+exit 0

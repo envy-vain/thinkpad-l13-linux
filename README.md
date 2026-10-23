@@ -9,6 +9,8 @@ distro with a **btrfs root** and **GRUB**:
   that are easy to get wrong: keeping the swapfile out of your snapshots, the `resume_offset`,
   and resuming with the right kernel.
 - **`scripts/power-tune.sh`** — battery charge limits, audio codec power saving, PCI runtime PM.
+- **`scripts/ultra-low-power.sh`** — an *Eco* mode you toggle on battery: CPU capped at 3 W average,
+  fan off, and the desktop stripped of eye candy. It works on any Intel laptop; the fan part needs a ThinkPad.
 
 Most of this applies to any Arch-based laptop. The two genuinely ThinkPad-specific bits are the
 battery charge thresholds and the post-resume fix for the TrackPoint and keyboard backlight.
@@ -21,6 +23,7 @@ battery charge thresholds and the post-resume fix for the TrackPoint and keyboar
 - [Hibernation](#hibernation)
 - [Gotchas that cost me the most time](#gotchas-that-cost-me-the-most-time)
 - [Power tuning](#power-tuning)
+- [Ultra low power mode](#ultra-low-power-mode)
 - [Undo](#undo)
 - [Tested on](#tested-on)
 
@@ -114,6 +117,32 @@ sudo ./scripts/power-tune.sh --no-pci-pm                 # skip a part
 
 Each part can be skipped with `--no-charge-limit`, `--no-audio-pm`, `--no-pci-pm`.
 
+## Ultra low power mode
+
+```sh
+./scripts/ultra-low-power.sh               # run as your user; asks for sudo
+ultra-low-power                            # toggle (also an "Ultra Low Power" app in the menu)
+ultra-low-power status                     # current cap and measured package power
+```
+
+When it's on:
+
+- **CPU: 3 W sustained (PL1), 12 W for short bursts (PL2)**, with turbo still allowed. Clicks, app starts and
+  page loads stay snappy, but steady load can't heat the laptop up. Idle and video draw don't change, so you
+  lose nothing there. A stricter version (2.5 W, no turbo, EPP=power) was 2.2× slower single-threaded for no
+  idle gain, so this one uses the RAPL cap alone.
+- **iGPU capped at 700 MHz.** 300 MHz made scrolling and video choppy.
+- **Fan off**, with a safety net: `ulp-fan-guard` hands the fan back to the EC at 65 °C, and the
+  thinkpad_acpi watchdog does too if the guard ever stops. Needs `options thinkpad_acpi fan_control=1`.
+- Keyboard backlight off, PCIe ASPM `powersupersave`, Bluetooth off (unless something is connected).
+- **KDE Plasma:** animations and blur off, and sensor-polling widgets, kded modules and background
+  services stopped. Everything comes back when you switch the mode off, even across a reboot.
+- `throttled` and `nbfc` are paused while the mode is on, because both would undo the cap or the fan setting.
+
+Switching the power profile to Balanced or Performance turns the mode off. A sleep hook re-applies the cap
+after resume, since the firmware resets RAPL on wake. On my L13 Gen 2, the CPU package went from 3.7 W to
+2.7 W while playing a video.
+
 ## Undo
 
 ```sh
@@ -128,6 +157,11 @@ sudo grub-mkconfig -o /boot/grub/grub.cfg
 sudo systemctl disable --now pci-runtime-pm.service
 sudo rm -f /etc/systemd/system/pci-runtime-pm.service /usr/local/bin/pci-runtime-pm \
            /etc/modprobe.d/audio-powersave.conf
+```
+
+```sh
+# ultra low power mode
+./scripts/ultra-low-power.sh --uninstall
 ```
 
 Battery thresholds live in the EC; reset them by writing `100` to

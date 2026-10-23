@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Ultra low power watcher
+Comment=Turns ultra low power off when the power profile is switched to Balanced or Performance
+Exec=systemctl --user start ulp-profile-watch.service
+OnlyShowIn=LXQt;
+NoDisplay=true

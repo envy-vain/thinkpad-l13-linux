@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Ultra Low Power
+GenericName=Toggle 3 W power mode
+Comment=Cap the CPU at 3 W and strip desktop effects; run again to restore
+Exec=/usr/local/bin/ultra-low-power toggle
+Icon=battery-profile-powersave
+Categories=System;Settings;
+Keywords=battery;power;saver;eco;watt;

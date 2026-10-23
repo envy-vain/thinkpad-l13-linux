@@ -140,6 +140,9 @@ case "$1" in
     fi
     ;;
   post)
+    # Woke up without a reboot (the suspend half of suspend-then-hibernate, or a hibernate that
+    # failed): drop the one-time GRUB entry, or the next normal boot would still use it.
+    [[ "$2" == *hibernate* ]] && grub-editenv /boot/grub/grubenv unset next_entry 2>/dev/null
     modprobe -r psmouse 2>/dev/null && modprobe psmouse
     sleep 1
     [ -s "$SAVE" ] && cat "$SAVE" > "$KBD" 2>/dev/null

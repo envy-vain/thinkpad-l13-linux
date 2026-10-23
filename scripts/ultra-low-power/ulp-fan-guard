@@ -1,0 +1,19 @@
+#!/bin/bash
+# Fan off while ultra-low-power is on, with a thermal safety net.
+# Started by ulp-root as the transient unit ulp-fan-guard.service.
+#   >= 65 C  hand the fan back to the EC (auto) until it cools to 55 C
+# The thinkpad_acpi watchdog reverts the fan to auto if this loop ever stops writing.
+FAN=/proc/acpi/ibm/fan
+for z in /sys/class/thermal/thermal_zone*; do [ "$(cat $z/type)" = x86_pkg_temp ] && TEMP=$z/temp; done
+[ -n "${TEMP:-}" ] || { echo "level auto" > $FAN; exit 1; }
+trap 'echo "level auto" > $FAN; exit 0' TERM INT
+echo "watchdog 30" > $FAN
+level=0
+while :; do
+  t=$(( $(cat $TEMP) / 1000 ))
+  if   [ $t -ge 65 ]; then level=auto
+  elif [ $t -le 55 ]; then level=0
+  fi
+  echo "level $level" > $FAN
+  sleep 5 & wait $!
+done

@@ -1,0 +1,130 @@
+#!/bin/bash
+# Ultra-low-power mode: 3 W sustained / 12 W burst CPU cap + stripped-down KDE.
+# usage: ultra-low-power [toggle|on|off|status|heal|watch]
+#   heal   undo leftover KDE changes if the mode was on across a reboot (run at login)
+#   watch  turn the mode off when the power profile is switched to Balanced or Performance
+STATE=${XDG_STATE_HOME:-$HOME/.local/state}/ultra-low-power.kde
+APPLETS_BAK=${XDG_STATE_HOME:-$HOME/.local/state}/ultra-low-power.appletsrc
+APPLETSRC=$HOME/.config/plasma-org.kde.plasma.desktop-appletsrc
+KWIN="qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects"
+KDED="qdbus6 org.kde.kded6 /kded org.kde.kded6"
+# Eye-candy effects; unloading them stops KWin repainting behind panels/popups.
+EYECANDY="blur contrast backgroundcontrast slide slidingpopups slidingnotifications fadingpopups squash scale
+  maximize fullscreen dimscreen dialogparent windowaperture login logout sessionquit shakecursor
+  highlightwindow blendchanges startupfeedback"
+# Widgets that poll sensors/stats every second or so.
+POLLING_WIDGETS="org.kde.plasma.systemmonitor.cpucore org.kde.olib.thermalmonitor boi.walle.cpuPowerMonitor
+  org.kde.plasma.powerusage org.kde.dwardor.fanspeedmonitor quest.entropy.zrammonitor com.ifny75.dynamicisland"
+# kded background modules that aren't needed for network, Bluetooth, tray, media keys or notifications.
+KDED_MODULES="remotenotifier ktimezoned device_automounter oom_notifier kded_bolt gtkconfig smbwatcher
+  baloosearchmodule devicenotifications kded_accounts donationmessage plasma_accentcolor_service
+  freespacenotifier browserintegrationflatpakintegrator lookandfeelautoswitcher wpad_detector kameleon"
+# User services/timers that only do background work.
+USER_UNITS="plasma-ksystemstats.service plasma-baloorunner.service plasma-foreground-booster.service
+  plasma-themer-picker.service arch-update-notification.service arch-update.timer obex.service"
+
+pkg_watts() {
+  local e1 e2; e1=$(cat /sys/class/powercap/intel-rapl:0/energy_uj); sleep 2
+  e2=$(cat /sys/class/powercap/intel-rapl:0/energy_uj)
+  awk -v d=$((e2 - e1)) 'BEGIN { printf "%.2f W", d / 2e6 }'
+}
+
+# The KDE half only applies inside Plasma; other desktops (LXQt) just get the root half.
+in_kde() { pgrep -u "$USER" -x plasmashell >/dev/null; }
+
+root() {
+  if [ "$EUID" -eq 0 ]; then /usr/local/bin/ulp-root "$1"; else pkexec /usr/local/bin/ulp-root "$1"; fi
+}
+
+on() {
+  root on || { notify-send -u critical "Ultra low power" "CPU limits not applied (authentication cancelled?)"; exit 1; }
+  if ! in_kde; then
+    notify-send -i battery-profile-powersave "Ultra low power: ON" "CPU averages ≤3 W (short bursts allowed); fan, Bluetooth and keyboard light off"
+    return 0
+  fi
+  mkdir -p "$(dirname "$STATE")"
+  # Keep the first saved state if we were left "on" across a logout/reboot.
+  if [ ! -e "$STATE" ]; then
+    { echo "anim $(kreadconfig6 --file kdeglobals --group KDE --key AnimationDurationFactor)"
+      echo "effects $($KWIN.loadedEffects | tr '\n' ' ')"
+      pgrep -x kdeconnectd >/dev/null && echo "kdeconnect 1"
+      loaded=" $($KDED.loadedModules | tr '\n' ' ') "
+      echo "kded $(for m in $KDED_MODULES; do [[ $loaded == *" $m "* ]] && printf '%s ' "$m"; done)"
+      echo "units $(for u in $USER_UNITS; do systemctl --user is-active -q "$u" && printf '%s ' "$u"; done)"
+    } > "$STATE"
+    cp "$APPLETSRC" "$APPLETS_BAK"
+  fi
+  kwriteconfig6 --file kdeglobals --group KDE --key AnimationDurationFactor 0
+  qdbus6 org.kde.KWin /KWin reconfigure >/dev/null
+  loaded=" $($KWIN.loadedEffects | tr '\n' ' ') "
+  for e in $EYECANDY; do [[ $loaded == *" $e "* ]] && $KWIN.unloadEffect "$e" >/dev/null; done
+  pkill -x kdeconnectd
+  balooctl6 suspend >/dev/null 2>&1
+  for m in $KDED_MODULES; do $KDED.unloadModule "$m" >/dev/null 2>&1; done
+  # Remove polling widgets; off() restores the saved panel layout.
+  qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "
+    var kill = '$(echo $POLLING_WIDGETS)'.split(' ');
+    panels().concat(desktops()).forEach(function (c) {
+      c.widgets().forEach(function (w) { if (kill.indexOf(w.type) >= 0) w.remove(); });
+    });" >/dev/null
+  # Removed widgets linger (for Undo) and keep ksystemstats alive until plasmashell restarts
+  systemctl --user restart plasma-plasmashell.service
+  sleep 3
+  for u in $USER_UNITS; do systemctl --user stop "$u" 2>/dev/null; done
+  notify-send -i battery-profile-powersave "Ultra low power: ON" \
+    "CPU averages ≤3 W; fan, Bluetooth, keyboard light, monitor widgets and KDE background services off"
+}
+
+# Undo the KDE half from the saved state.
+restore_user() {
+  [ -e "$STATE" ] && in_kde || return 0
+  while read -r key val; do
+    case "$key" in
+      anim)       if [ -n "$val" ]; then kwriteconfig6 --file kdeglobals --group KDE --key AnimationDurationFactor "$val"
+                  else kwriteconfig6 --file kdeglobals --group KDE --key AnimationDurationFactor --delete; fi ;;
+      effects)    for e in $val; do $KWIN.loadEffect "$e" >/dev/null; done ;;
+      kdeconnect) setsid -f /usr/bin/kdeconnectd >/dev/null 2>&1 ;;
+      kded)       for m in $val; do $KDED.loadModule "$m" >/dev/null 2>&1; done ;;
+      units)      for u in $val; do systemctl --user start "$u" 2>/dev/null; done ;;
+    esac
+  done < "$STATE"
+  balooctl6 resume >/dev/null 2>&1
+  qdbus6 org.kde.KWin /KWin reconfigure >/dev/null
+  if [ -e "$APPLETS_BAK" ]; then
+    systemctl --user stop plasma-plasmashell.service
+    cp "$APPLETS_BAK" "$APPLETSRC"
+    systemctl --user start plasma-plasmashell.service
+    rm -f "$APPLETS_BAK"
+  fi
+  rm -f "$STATE"
+}
+
+off() {
+  root off || { notify-send -u critical "Ultra low power" "Could not restore CPU limits (authentication cancelled?)"; exit 1; }
+  restore_user
+  notify-send -i battery-profile-performance "Ultra low power: OFF" "Normal power settings restored"
+}
+
+watch() {
+  gdbus monitor --system --dest net.hadess.PowerProfiles --object-path /net/hadess/PowerProfiles |
+    while read -r line; do
+      case "$line" in
+        *"'ActiveProfile': <'balanced'>"*|*"'ActiveProfile': <'performance'>"*)
+          [ -e /run/ultra-low-power ] && off ;;
+      esac
+    done
+}
+
+case "${1:-toggle}" in
+  on) on ;;
+  off) off ;;
+  toggle) if [ -e /run/ultra-low-power ]; then off; else on; fi ;;
+  heal) [ -e /run/ultra-low-power ] || restore_user ;;
+  watch) watch ;;
+  status)
+    if [ -e /run/ultra-low-power ]; then echo "ultra low power: ON"; else echo "ultra low power: off"; fi
+    echo "package cap: $(( $(cat /sys/class/powercap/intel-rapl:0/constraint_0_power_limit_uw) / 1000 )) mW"
+    echo "package now: $(pkg_watts)"
+    ;;
+  *) echo "usage: ultra-low-power [toggle|on|off|status|heal|watch]" >&2; exit 2 ;;
+esac

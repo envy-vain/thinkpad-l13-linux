@@ -1,0 +1,13 @@
+[Unit]
+Description=Turn ultra low power mode off when the power profile changes to Balanced/Performance
+PartOf=graphical-session.target
+After=plasma-plasmashell.service
+
+[Service]
+ExecStartPre=/usr/local/bin/ultra-low-power heal
+ExecStart=/usr/local/bin/ultra-low-power watch
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target
